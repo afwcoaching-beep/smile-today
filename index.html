@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What made you smile today?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sun: #FFE066;
+    --ink: #1B2A41;
+    --white: #FFFFFF;
+    --pink: #FF9EB1;
+    --mint: #8FE3CB;
+    --lilac: #C0B2FF;
+    --sky: #86CBFF;
+    font-family: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--sun); color: var(--ink); overflow-x: hidden; }
+  main { min-height: 100%; display: flex; flex-direction: column; }
+  [hidden] { display: none !important; }
+
+  /* Submit view */
+  #submit-view { flex: 1; display: grid; place-content: center; padding: 24px; gap: 20px; max-width: 640px; margin: 0 auto; width: 100%; }
+  h1 { font-size: clamp(2.2rem, 7vw, 4rem); line-height: 1.02; margin: 0; font-weight: 800; letter-spacing: -0.02em; }
+  textarea {
+    width: 100%; min-height: 140px; resize: vertical; padding: 16px 18px;
+    font: inherit; font-size: 1.1rem; color: var(--ink);
+    background: var(--white); border: 3px solid var(--ink); border-radius: 18px;
+  }
+  textarea:focus-visible, button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit; font-weight: 700; font-size: 1rem; cursor: pointer;
+    padding: 12px 22px; border-radius: 999px; border: 3px solid var(--ink);
+  }
+  .primary { background: var(--ink); color: var(--sun); }
+  .secondary { background: transparent; color: var(--ink); }
+  button:disabled { opacity: .5; cursor: default; }
+  #count { margin-left: auto; font-size: .9rem; }
+  #status { min-height: 1.4em; margin: 0; font-weight: 700; }
+
+  /* Answers view */
+  #answers-view { position: relative; flex: 1; min-height: 100vh; overflow: hidden; }
+  #back { position: absolute; top: 18px; left: 18px; z-index: 5; background: var(--sun); }
+  #empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; padding: 24px; font-size: 1.3rem; font-weight: 700; }
+  .bubble {
+    position: absolute; max-width: min(260px, 70vw); padding: 14px 18px;
+    border-radius: 26px; font-size: 1.05rem; line-height: 1.3; font-weight: 600;
+    border: 3px solid var(--ink); overflow-wrap: anywhere;
+    animation: drift var(--dur) ease-in-out var(--delay) infinite alternate;
+  }
+  @keyframes drift {
+    0%   { transform: translate(0, 0) rotate(var(--r0)); }
+    50%  { transform: translate(var(--x1), var(--y1)) rotate(var(--r1)); }
+    100% { transform: translate(var(--x2), var(--y2)) rotate(var(--r0)); }
+  }
+  @media (prefers-reduced-motion: reduce) { .bubble { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <section id="submit-view">
+    <h1>What did you notice today that made you smile?</h1>
+    <label for="answer" class="sr" style="position:absolute;left:-9999px">Your answer</label>
+    <textarea id="answer" maxlength="280" placeholder="A stranger held the door, my dog did a zoomie…"></textarea>
+    <div class="row">
+      <button id="send" class="primary">Share my smile</button>
+      <button id="show" class="secondary">Show me the answers</button>
+      <span id="count" aria-hidden="true">0 / 280</span>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section id="answers-view" hidden>
+    <button id="back" class="secondary">Go back to submission page</button>
+    <div id="stage"></div>
+    <div id="empty" hidden>No answers yet. Be the first to share a smile.</div>
+  </section>
+</main>
+
+<script>
+  // ---- Supabase connection ----
+  const SUPABASE_URL = "https://amlnckiylajntnatvjsq.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_26gaB8EeslGyhxF_gev6AA_E_UG0_VA"; // safe for browsers; RLS protects the table
+  const ENDPOINT = SUPABASE_URL + "/rest/v1/happy_answers";
+  const HEADERS = { "apikey": SUPABASE_KEY, "Content-Type": "application/json" };
+
+  async function saveAnswer(text) {
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: { ...HEADERS, "Prefer": "return=minimal" },
+      body: JSON.stringify({ answer: text })
+    });
+    if (!res.ok) throw new Error("Save failed (" + res.status + ")");
+  }
+
+  async function loadAnswers() {
+    const res = await fetch(ENDPOINT + "?select=entry_id,answer,created_date&order=created_date.desc&limit=50", { headers: HEADERS });
+    if (!res.ok) throw new Error("Load failed (" + res.status + ")");
+    return res.json();
+  }
+
+  // ---- UI ----
+  const $ = id => document.getElementById(id);
+  const answerEl = $("answer"), statusEl = $("status"), sendBtn = $("send"), showBtn = $("show");
+  const colors = ["--white", "--pink", "--mint", "--lilac", "--sky"];
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  answerEl.addEventListener("input", () => { $("count").textContent = answerEl.value.length + " / 280"; });
+
+  sendBtn.addEventListener("click", async () => {
+    const text = answerEl.value.trim();
+    if (!text) { statusEl.textContent = "Write something first."; return; }
+    sendBtn.disabled = true; statusEl.textContent = "Sharing…";
+    try {
+      await saveAnswer(text);
+      answerEl.value = ""; $("count").textContent = "0 / 280";
+      statusEl.textContent = "Shared. Thanks for the smile!";
+    } catch (e) {
+      statusEl.textContent = "Couldn't share your answer. Check your connection and try again.";
+    } finally { sendBtn.disabled = false; }
+  });
+
+  showBtn.addEventListener("click", async () => {
+    showBtn.disabled = true; statusEl.textContent = "Loading answers…";
+    try {
+      const rows = await loadAnswers();
+      renderBubbles(rows);
+      $("submit-view").hidden = true;
+      $("answers-view").hidden = false;
+      statusEl.textContent = "";
+    } catch (e) {
+      statusEl.textContent = "Couldn't load answers. Check your connection and try again.";
+    } finally { showBtn.disabled = false; }
+  });
+
+  $("back").addEventListener("click", () => {
+    $("answers-view").hidden = true;
+    $("submit-view").hidden = false;
+  });
+
+  function renderBubbles(rows) {
+    const stage = $("stage");
+    stage.replaceChildren();
+    $("empty").hidden = rows.length > 0;
+    rows.forEach((row, i) => {
+      const b = document.createElement("div");
+      b.className = "bubble";
+      b.textContent = row.answer; // textContent keeps user input from being run as HTML
+      const s = b.style;
+      s.left = rand(2, 68) + "%";
+      s.top = rand(10, 82) + "%";
+      s.background = "var(" + colors[i % colors.length] + ")";
+      s.setProperty("--dur", rand(7, 14) + "s");
+      s.setProperty("--delay", -rand(0, 10) + "s");
+      s.setProperty("--x1", rand(-90, 90) + "px");
+      s.setProperty("--y1", rand(-70, 70) + "px");
+      s.setProperty("--x2", rand(-120, 120) + "px");
+      s.setProperty("--y2", rand(-90, 90) + "px");
+      s.setProperty("--r0", rand(-4, 4) + "deg");
+      s.setProperty("--r1", rand(-6, 6) + "deg");
+      stage.appendChild(b);
+    });
+  }
+</script>
+</body>
+</html>
